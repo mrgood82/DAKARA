@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Sort The Trash</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none; 
+        }
+
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #gameContainer {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        canvas {
+            background-color: #000;
+            width: 100vw;
+            height: 100vh;
+            display: block;
+            object-fit: fill; 
+        }
+
+        #bgVideo, #transitionVideo {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="gameContainer">
+    <video id="bgVideo" src="assets/bg_main_menu.mp4" loop muted playsinline></video>
+    <video id="transitionVideo" src="assets/transisi_fase.mp4" playsinline></video>
+    <canvas id="gameCanvas" width="1280" height="720"></canvas>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const video = document.getElementById('bgVideo');
+const transVideo = document.getElementById('transitionVideo');
+
+// --- SISTEM OVERLAY & FAKTA ---
+let phaseOverlay = {
+    active: false, text: "", subtext: "", opacity: 0, timer: 0, duration: 150, scale: 0.8, pendingMusic: null 
+};
+
+let factOverlay = {
+    active: false, text: "", opacity: 0, timer: 0, 
+    duration: 240, 
+    nextLevel: 1, bgSnapshot: null
+};
+
+let blackFade = { opacity: 0, target: 0, active: false, callback: null };
+
+const TRASH_FACTS = [
+    "TPA Sarimukti di Cipatat merupakan pusat pembuangan akhir utama untuk wilayah Bandung Raya.",
+    "Sampah organik yang tidak terkelola menyumbang 60% dari total volume sampah di Bandung Barat.",
+    "Mendaur ulang 1 ton kertas dapat menyelamatkan sekitar 17 pohon dewasa.",
+    "Botol plastik PET dapat didaur ulang menjadi serat kain untuk kaos atau tas.",
+    "KBB memproduksi ratusan ton sampah setiap hari; pemilahan dari rumah sangat krusial.",
+    "Satu sterofom butuh waktu 500 tahun hingga selamanya untuk bisa hancur secara alami.",
+    "Pupuk kompos dari sampah dapur bisa mengurangi beban TPA hingga puluhan persen.",
+    "Kaca bening memiliki nilai ekonomi tinggi jika dikumpulkan dalam keadaan bersih.",
+    "Sampah B3 seperti baterai harus dipisahkan karena mengandung merkuri yang beracun.",
+    "Program Kang Pisman (Kurangi, Pisahkan, Manfaatkan) adalah kunci keberhasilan lingkungan.",
+    "Warga yang memilah sampah membantu pahlawan kebersihan (petugas) bekerja lebih aman.",
+    "Kertas koran bekas bisa diolah kembali menjadi kerajinan tangan bernilai seni tinggi.",
+    "Limbah elektronik mengandung emas dan tembaga, namun sangat beracun jika dibakar.",
+    "Menanam pohon di lingkungan rumah membantu menyerap polusi dari gas metana sampah.",
+    "Pemanfaatan 'Bank Sampah' di sekolah bisa membantu siswa belajar menabung sambil menjaga bumi."
+];
+
+const LEVEL_NAMES = { 1: "Halaman Rumah", 2: "Ruang Tamu", 3: "Kamar", 4: "Ruang Guru", 5: "Dalam Kelas", 6: "Ruang Baca" };
+
+const ITEM_DISPLAY_NAMES = {
+    "botol": "Botol Plastik", "susu": "Botol Susu", "pisang": "Kulit Pisang", "baterai": "Baterai Bekas",
+    "duri": "Duri Ikan", "kaleng": "Kaleng Minuman", "pemutih": "Botol Pemutih", "tisu": "Tisu Bekas",
+    "sisa_makanan": "Sisa Makanan", "plastik": "Kantong Plastik", "obat_nyamuk": "Obat Nyamuk",
+    "kabel": "Kabel Rusak", "kertas": "Kertas Bekas", "bangkai": "Bangkai Tikus", "gelas_plastik": "Gelas Ala Ala",
+    "styrofoam": "Styrofoam", "tinta": "Botol Tinta", "kaca": "Pecahan Kaca", "oli": "Botol Oli Bekas",
+    "mika": "Plastik Mika", "snack": "Bungkus Snack", "cuanki": "Cuanki Busuk", "kardus": "Kardus Indomu",
+    "rautan": "Sampah Rautan", "spidol": "Spidol Bocor", "lem": "Lem Fix", "pembersih": "Cairan Pembersih",
+    "sapu": "Sapu Ijuk", "bangku": "Bangku Kayu", "sepeda": "Sepeda Onthel", "kursi1": "Kursi Ruang Tamu",
+    "kursi2": "Kursi Santai", "meja": "Meja Kayu", "cermin": "Cermin Besar", "meja_kecil": "Meja Nakas",
+    "custom_kasur": "Tempat Tidur", "lukisan1": "Lukisan Dinding", "lukisan2": "Bingkai Foto",
+    "lukisan3": "Bingkai Foto", "lukisan4": "Bingkai Foto", "motor": "Motor Matic", "ban": "Ban Motor",
+    "wadah_mbg": "MBG", "siswa1": "Kathan", "siswa2": "Deas", "siswa3": "Radit",
+    "hp": "Smartphone", "cepuk": "Cepuk", "tas": "Tas Sekolah", "buku": "Buku Pelajaran",
+    "poster": "Poster Evangelion", "wadah_tisu": "Kotak Tisu", "thomas": "Mainan Thomas",
+    "buku_kti": "Buku KTI", "laptop": "Laptop", "kipas_angin": "Kipas Angin", "picture_frame": "Bingkai Foto",
+    "alat_mengepel": "Alat Pel", "miniatur_eva": "Miniatur EVA", "manga_jojo": "Manga JoJo",
+    "tempat_tulis": "Tempat Alat Tulis", "wifi": "Router Wifi", "buku_bekas": "Buku Bekas",
+    "bangkai_kodok": "Bangkai Kodok", "sisa_popmie": "Sisa Pop Mie", "boba": "Gelas Boba",
+    "pengharum": "Pengharum Ruangan", "foil": "Kemasan Foil", "sisa_cat": "Kaleng Sisa Cat",
+    "sanitizer": "Hand Sanitizer", "mouse_rusak": "Mouse Rusak"
+};
+
+const assets = { images: {}, sounds: {}, totalResources: 0, loadedCount: 0 };
+
+const IMAGE_RESOURCES = {
+    "bg_level1": "assets/bg_level1.png", "bg_level2": "assets/bg_level2.png", "bg_level3": "assets/bg_level3.png",
+    "bg_level4": "assets/bg_level4.png", "bg_level5": "assets/bg_level5.png", "bg_level6": "assets/bg_level6.png",
+    "logo": "assets/logo_sort_the_trash.png", "win_img": "assets/menang.png", "lose_img": "assets/game_over.png", "heart": "assets/hati.png",
+    "bin_organik": "assets/bin_organik.png", "bin_anorganik": "assets/bin_anorganik.png", "bin_b3": "assets/bin_b3.png",
+    "btn_play": "assets/btn_play.png", "btn_play_h": "assets/btn_play_hold.png", "btn_levels": "assets/btn_levels.png",
+    "btn_levels_h": "assets/btn_levels_hold.png", "btn_guide": "assets/btn_guide.png", "btn_guide_h": "assets/btn_guide_hold.png",
+    "btn_restart": "assets/btn_restart.png", "btn_restart_h": "assets/btn_restart_hold.png", "btn_home": "assets/btn_home.png",
+    "btn_home_h": "assets/btn_home_hold.png", "btn_continue": "assets/btn_continue.png", "btn_continue_h": "assets/btn_continue_hold.png",
+    "botol": "assets/item_botol.png", "susu": "assets/item_susu.png", "pisang": "assets/item_pisang.png",
+    "baterai": "assets/item_baterai.png", "sapu": "assets/item_sapu.png", "bangku": "assets/item_bangku.png",
+    "sepeda": "assets/item_sepeda.png", "duri": "assets/duri_ikan.png", "kaleng": "assets/kaleng.png",
+    "pemutih": "assets/botol_pemutih.png", "kursi1": "assets/kursi_1.png", "kursi2": "assets/kursi_2.png",
+    "meja": "assets/meja.png", "cermin": "assets/hiasan_cermin.png", "meja_kecil": "assets/hiasan_meja_kecil.png",
+    "custom_kasur": "assets/hiasan_kasur.png", "lukisan1": "assets/hiasan_lukisan1.png", "lukisan2": "assets/hiasan_lukisan2.png",
+    "lukisan3": "assets/hiasan_lukisan3.png", "lukisan4": "assets/hiasan_lukisan4.png", "tisu": "assets/item_tisu.png",
+    "sisa_makanan": "assets/item_sisa_makanan.png", "plastik": "assets/item_plastik.png", "obat_nyamuk": "assets/item_obat_nyamuk.png",
+    "kabel": "assets/item_kabel.png", "kertas": "assets/item_kertas_print.png", "bangkai": "assets/item_bangkai_hewan.png",
+    "gelas_plastik": "assets/item_gelas_plastik.png", "styrofoam": "assets/item_styrofoam.png", "tinta": "assets/item_tinta_printer.png",
+    "kaca": "assets/item_pecahan_kaca.png", "oli": "assets/item_oli_bekas.png", "motor": "assets/hiasan_motor.png",
+    "ban": "assets/hiasan_ban_baru.png", "wadah_mbg": "assets/hiasan_wadah_mbg.png", "siswa1": "assets/hiasan_siswa1.png",
+    "siswa2": "assets/hiasan_siswa2.png", "siswa3": "assets/hiasan_siswa3.png", "btn_mute": "assets/btn_mute.png",
+    "btn_unmute": "assets/btn_unmute.png", "mika": "assets/item_mika.png", "snack": "assets/item_snack.png",
+    "cuanki": "assets/item_cuanki.png", "kardus": "assets/item_kardus.png", "rautan": "assets/item_rautan.png",
+    "spidol": "assets/item_spidol.png", "lem": "assets/item_lem.png", "pembersih": "assets/item_pembersih.png",
+    "hp": "assets/hiasan_hp.png", "cepuk": "assets/hiasan_cepuk.png", "tas": "assets/hiasan_tas.png",
+    "buku": "assets/hiasan_buku.png", "poster": "assets/hiasan_poster.png", "wadah_tisu": "assets/hiasan_wadah_tisu.png",
+    "thomas": "assets/hiasan_thomas.png",
+    "buku_kti": "assets/Buku_Kti.png", "laptop": "assets/Laptop.png", "kipas_angin": "assets/Kipas_Angin.png",
+    "picture_frame": "assets/picture_frame.png", "alat_mengepel": "assets/Alat_mengepel.png",
+    "miniatur_eva": "assets/Miniatur_Eva.png", "manga_jojo": "assets/Manga_Jojo.png",
+    "tempat_tulis": "assets/Tempat_Alat_tulis.png", "wifi": "assets/Wifi.png",
+    "buku_bekas": "assets/Buku_Bekas.png", "bangkai_kodok": "assets/Bangkai_Kodok.png",
+    "sisa_popmie": "assets/Sisa_Pop_Mie.png", "boba": "assets/Minuman_Boba.png",
+    "pengharum": "assets/Pengharum_ruangan.png", "foil": "assets/Kemasan_foil.png",
+    "sisa_cat": "assets/Sisa_cat.png", "sanitizer": "assets/Hand_Sanitizer.png", "mouse_rusak": "assets/Mouse_rusak.png"
+};
+
+const AUDIO_RESOURCES = {
+    "lobby": "assets/stt_lobby.mp3", "ingame": "assets/stt_ingame.mp3", "win": "assets/stt_menang.mp3",
+    "lose": "assets/stt_kalah.mp3", "click": "assets/stt_klik_tombol.mp3", "trash": "assets/stt_buang_sampah.mp3"
+};
+
+class SpriteItem {
+    constructor(assetId, trashType, xPos, yPos, width, height, canBeThrown = true) {
+        this.id = assetId; this.type = trashType; this.x = xPos; this.y = yPos;
+        this.w = width; this.h = height; this.initialX = xPos; this.initialY = yPos;
+        this.isTrash = canBeThrown; this.isBeingDragged = false;
+    }
+    render(renderingContext) {
+        const imageRef = assets.images[this.id];
+        if (imageRef && imageRef.complete) { renderingContext.drawImage(imageRef, this.x, this.y, this.w, this.h); } 
+        else { renderingContext.fillStyle = this.isTrash ? "#e67e22" : "#3498db"; renderingContext.fillRect(this.x, this.y, this.w, this.h); }
+        if (this.isBeingDragged) {
+            const displayName = ITEM_DISPLAY_NAMES[this.id] || "Item";
+            renderingContext.save();
+            renderingContext.textAlign = "center";
+            renderingContext.font = "bold 26px 'Arial Black', Gadget, sans-serif";
+            renderingContext.shadowBlur = 15; renderingContext.shadowColor = "rgba(0, 0, 0, 1)";
+            renderingContext.fillStyle = "#FFD700"; renderingContext.strokeStyle = "#000000"; renderingContext.lineWidth = 4;
+            renderingContext.strokeText(displayName.toUpperCase(), this.x + this.w / 2, this.y - 20);
+            renderingContext.fillText(displayName.toUpperCase(), this.x + this.w / 2, this.y - 20);
+            renderingContext.restore();
+        }
+    }
+    returnToOrigin() { this.x = this.initialX; this.y = this.initialY; }
+}
+
+let currentState = "INIT";
+let activeLevel = 0; let playerLives = 3;
+let dragSubject = null; let currentHoverButton = null;
+let gameObjects = []; let screenShakeCounter = 0;
+let gameTimer = 80; let timerInterval = null;
+let levelRetries = 3; let isMuted = false;
+const muteBtnConfig = { x: 30, y: 630, w: 70, h: 70 };
+const menuConfig = { logo: { x: 430, y: 50, w: 500, h: 240 }, buttons: { x: 500, w: 330, h: 95 } };
+const BIN_DEFINITIONS = [ { type: "organik", x: 850, y: 480, w: 110, h: 200 }, { type: "anorganik", x: 980, y: 480, w: 110, h: 200 }, { type: "b3", x: 1110, y: 480, w: 110, h: 200 } ];
+
+function handleBGM(musicKey) {
+    const listBGM = ['lobby', 'ingame', 'win', 'lose'];
+    listBGM.forEach(k => { if (assets.sounds[k]) { assets.sounds[k].pause(); assets.sounds[k].currentTime = 0; } });
+    if (assets.sounds[musicKey]) { assets.sounds[musicKey].loop = true; assets.sounds[musicKey].muted = isMuted; assets.sounds[musicKey].play().catch(e => {}); }
+}
+
+function toggleMute() { 
+    isMuted = !isMuted; 
+    Object.values(assets.sounds).forEach(sound => { sound.muted = isMuted; }); 
+    transVideo.muted = isMuted; 
+}
+function stopAllBGM() { ['lobby', 'ingame', 'win', 'lose'].forEach(k => { if (assets.sounds[k]) { assets.sounds[k].pause(); assets.sounds[k].currentTime = 0; } }); }
+function executeSFX(sfxKey) { if (assets.sounds[sfxKey]) { assets.sounds[sfxKey].muted = isMuted; assets.sounds[sfxKey].currentTime = 0; assets.sounds[sfxKey].play().catch(e => {}); } }
+
+function startTransitionToPhase2() {
+    stopAllBGM();
+    phaseOverlay.pendingMusic = null; 
+    phaseOverlay.active = false;
+    blackFade.active = true;
+    blackFade.target = 1;
+    blackFade.callback = () => {
+        currentState = "PHASE_TRANSITION";
+        stopAllBGM();
+        transVideo.muted = isMuted;
+        transVideo.currentTime = 0;
+        transVideo.play().catch(e => { setupLevel(4); });
+        blackFade.target = 0;
+    };
+    
+    transVideo.onended = () => {
+        blackFade.active = true;
+        blackFade.target = 1;
+        blackFade.callback = () => {
+            setupLevel(4);
+            blackFade.target = 0;
+        };
+    };
+}
+
+function setupLevel(lvlNumber) {
+    if (lvlNumber !== activeLevel) {
+        levelRetries = 3; factOverlay.active = true; factOverlay.timer = 0; factOverlay.opacity = 0; factOverlay.nextLevel = lvlNumber;
+        factOverlay.text = TRASH_FACTS[Math.floor(Math.random() * TRASH_FACTS.length)];
+        factOverlay.bgSnapshot = assets.images[`bg_level${activeLevel}`] || assets.images["bg_level1"];
+        currentState = "FACT_LOADING"; return; 
+    }
+    if (levelRetries > 0) { levelRetries--; actualStartLevel(lvlNumber); } else { activeLevel = 0; setupLevel(1); }
+}
+
+function actualStartLevel(lvlNumber) {
+    activeLevel = lvlNumber; playerLives = (lvlNumber >= 4) ? 2 : 3; gameObjects = []; dragSubject = null; clearInterval(timerInterval);
+    video.pause();
+    if (lvlNumber === 1) {
+        gameTimer = 90; stopAllBGM(); phaseOverlay = { active: true, text: "Fase 1:", subtext: "Awal Dari Rumah Dimulai", opacity: 0, timer: 0, duration: 150, scale: 0.7, pendingMusic: 'ingame' };
+        gameObjects.push(new SpriteItem("botol", "anorganik", 300, 510, 40, 90, true)); gameObjects.push(new SpriteItem("pisang", "organik", 500, 550, 80, 80, true));
+        gameObjects.push(new SpriteItem("baterai", "b3", 740, 590, 40, 60, true)); gameObjects.push(new SpriteItem("sapu", "hiasan", 680, 390, 40, 100, false));
+        gameObjects.push(new SpriteItem("bangku", "hiasan", 320, 600, 120, 120, false)); gameObjects.push(new SpriteItem("sepeda", "hiasan", 500, 420, 230, 170, false));
+    } else if (lvlNumber === 2) {
+        gameTimer = 90; gameObjects.push(new SpriteItem("kursi1", "hiasan", 750, 490, 180, 180, false)); gameObjects.push(new SpriteItem("kursi2", "hiasan", 350, 490, 180, 180, false));
+        gameObjects.push(new SpriteItem("meja", "hiasan", 515, 520, 250, 150, false)); gameObjects.push(new SpriteItem("kaleng", "anorganik", 205, 560, 55, 80, true));
+        gameObjects.push(new SpriteItem("pemutih", "b3", 400, 410, 45, 90, true)); gameObjects.push(new SpriteItem("pisang", "organik", 100, 630, 80, 80, true));
+        gameObjects.push(new SpriteItem("botol", "anorganik", 750, 410, 40, 90, true)); gameObjects.push(new SpriteItem("duri", "organik", 600, 580, 80, 60, true)); handleBGM('ingame');
+    } else if (lvlNumber === 3) {
+        gameTimer = 80; gameObjects.push(new SpriteItem("cermin", "hiasan", 10, 250, 220, 450, false)); gameObjects.push(new SpriteItem("meja_kecil", "hiasan", 290, 380, 120, 250, false));
+        gameObjects.push(new SpriteItem("custom_kasur", "hiasan", 430, 430, 450, 220, false)); gameObjects.push(new SpriteItem("lukisan2", "hiasan", 380, 320, 60, 80, false));
+        gameObjects.push(new SpriteItem("lukisan3", "hiasan", 460, 320, 60, 80, false)); gameObjects.push(new SpriteItem("lukisan4", "hiasan", 530, 320, 60, 80, false));
+        gameObjects.push(new SpriteItem("lukisan1", "hiasan", 1100, 250, 120, 150, false)); gameObjects.push(new SpriteItem("tisu", "organik", 680, 480, 50, 40, true));
+        gameObjects.push(new SpriteItem("sisa_makanan", "organik", 600, 490, 90, 50, true)); gameObjects.push(new SpriteItem("plastik", "anorganik", 680, 620, 80, 90, true));
+        gameObjects.push(new SpriteItem("kaleng", "anorganik",240, 560, 50, 70, true)); gameObjects.push(new SpriteItem("obat_nyamuk", "b3", 950, 380, 28, 82, true));
+        gameObjects.push(new SpriteItem("kabel", "b3", 150, 650, 100, 50, true)); timerInterval = setInterval(() => { gameTimer--; if (gameTimer <= 0) { clearInterval(timerInterval); currentState = "SCREEN_LOSE"; handleBGM('lose'); } }, 1000); handleBGM('ingame');
+    } else if (lvlNumber === 4) {
+        // UPDATE LEVEL 4 SISWA SETTINGS
+        gameTimer = 60; stopAllBGM(); phaseOverlay = { active: true, text: "Fase 2:", subtext: "Seragam dan Buku", opacity: 0, timer: 0, duration: 150, scale: 0.7, pendingMusic: 'ingame' };
+        gameObjects.push(new SpriteItem("motor", "hiasan", 10, 430, 190, 130, false)); gameObjects.push(new SpriteItem("ban", "hiasan", 320, 600, 90, 90, false));
+        gameObjects.push(new SpriteItem("wadah_mbg", "hiasan", 755, 580, 80, 60, false)); 
+        gameObjects.push(new SpriteItem("siswa1", "hiasan", 120, 400, 80, 240, false));
+        gameObjects.push(new SpriteItem("siswa2", "hiasan", 650, 420, 90, 200, false)); 
+        gameObjects.push(new SpriteItem("siswa3", "hiasan", 450, 410, 80, 200, false));
+        gameObjects.push(new SpriteItem("sisa_makanan", "organik", 755, 150, 80, 45, true)); gameObjects.push(new SpriteItem("kertas", "organik", 300, 520, 40, 40, true));
+        gameObjects.push(new SpriteItem("bangkai", "organik", 150, 310, 70, 30, true)); gameObjects.push(new SpriteItem("plastik", "anorganik", 50, 550, 70, 80, true));
+        gameObjects.push(new SpriteItem("gelas_plastik", "anorganik", 400, 500, 40, 65, true)); gameObjects.push(new SpriteItem("styrofoam", "anorganik", 7, 200, 90, 50, true));
+        gameObjects.push(new SpriteItem("tinta", "b3", 210, 440, 15, 45, true)); gameObjects.push(new SpriteItem("kaca", "b3", 560, 610, 65, 65, true));
+        gameObjects.push(new SpriteItem("oli", "b3", 735, 510, 35, 65, true)); timerInterval = setInterval(() => { gameTimer--; if (gameTimer <= 0) { clearInterval(timerInterval); currentState = "SCREEN_LOSE"; handleBGM('lose'); } }, 1000); 
+    } else if (lvlNumber === 5) {
+        gameTimer = 50; handleBGM('ingame'); 
+        gameObjects.push(new SpriteItem("poster", "hiasan", 440, 210, 95, 130, false));
+        gameObjects.push(new SpriteItem("hp", "hiasan", 460, 560, 70, 50, false));
+        gameObjects.push(new SpriteItem("wadah_mbg", "hiasan", 710, 345, 45, 30, false));
+        gameObjects.push(new SpriteItem("tas", "hiasan", 210, 510, 100, 100, false));
+        gameObjects.push(new SpriteItem("buku", "hiasan", 500, 430, 50, 50, false));
+        gameObjects.push(new SpriteItem("wadah_tisu", "hiasan", 895, 430, 75, 45, false));
+        gameObjects.push(new SpriteItem("thomas", "hiasan", 230, 375, 75, 50, false));
+        gameObjects.push(new SpriteItem("cepuk", "hiasan", 800, 480, 65, 55, false));
+        gameObjects.push(new SpriteItem("kardus", "organik", 640, 450, 90, 72, true));
+        gameObjects.push(new SpriteItem("cuanki", "organik", 750, 410, 25, 40, true));
+        gameObjects.push(new SpriteItem("lem", "b3", 30, 520, 35, 50, true));
+        gameObjects.push(new SpriteItem("mika", "anorganik", 320, 470, 85, 70, true));
+        gameObjects.push(new SpriteItem("susu", "anorganik", 1190, 420, 15, 45, true));
+        gameObjects.push(new SpriteItem("pembersih", "b3", 685, 615, 50, 80, true));
+        gameObjects.push(new SpriteItem("spidol", "b3", 420, 555, 25, 65, true));
+        gameObjects.push(new SpriteItem("snack", "anorganik", 370, 430, 30, 30, true));
+        gameObjects.push(new SpriteItem("rautan", "organik", 1230, 600, 35, 35, true));
+        timerInterval = setInterval(() => { gameTimer--; if (gameTimer <= 0) { clearInterval(timerInterval); currentState = "SCREEN_LOSE"; handleBGM('lose'); } }, 1000);
+    } else if (lvlNumber === 6) {
+        gameTimer = 45; handleBGM('ingame');
+        // --- HIASAN ---
+        gameObjects.push(new SpriteItem("wifi", "hiasan", 800, 390, 60, 60, false));
+        gameObjects.push(new SpriteItem("laptop", "hiasan", 600, 450, 130, 90, false));
+        gameObjects.push(new SpriteItem("buku_kti", "hiasan", 25, 160, 40, 75, false));
+        gameObjects.push(new SpriteItem("kipas_angin", "hiasan", 870, 370, 100, 80, false));
+        gameObjects.push(new SpriteItem("picture_frame", "hiasan", 760, 410, 50, 60, false));
+        gameObjects.push(new SpriteItem("alat_mengepel", "hiasan", 630, 330, 70, 130, false));
+        gameObjects.push(new SpriteItem("miniatur_eva", "hiasan", 1005, 330, 150, 160, false));
+        gameObjects.push(new SpriteItem("manga_jojo", "hiasan", 305, 340, 55, 85, false));
+        gameObjects.push(new SpriteItem("tempat_tulis", "hiasan", 575, 520, 45, 65, false));
+
+        // --- SAMPAH ---
+        gameObjects.push(new SpriteItem("bangkai_kodok", "organik", 150, 580, 70, 35, true));
+        gameObjects.push(new SpriteItem("buku_bekas", "organik", 1225, 390, 80, 45, true));
+        gameObjects.push(new SpriteItem("sisa_popmie", "organik", 805, 595, 50, 60, true));
+        gameObjects.push(new SpriteItem("boba", "anorganik", 435, 630, 45, 80, true));
+        gameObjects.push(new SpriteItem("pengharum", "anorganik", 430, 470, 30, 70, true));
+        gameObjects.push(new SpriteItem("foil", "anorganik", 310, 580, 40, 70, true));
+        gameObjects.push(new SpriteItem("sisa_cat", "b3", 55, 580, 75, 85, true));
+        gameObjects.push(new SpriteItem("sanitizer", "b3", 1200, 430, 35, 65, true));
+        gameObjects.push(new SpriteItem("mouse_rusak", "b3", 960, 390, 45, 25, true));
+
+        timerInterval = setInterval(() => { gameTimer--; if (gameTimer <= 0) { clearInterval(timerInterval); currentState = "SCREEN_LOSE"; handleBGM('lose'); } }, 1000);
+    }
+    currentState = "IN_GAME";
+}
+
+function drawButtonUI(btnId, posX, posY, width, height, assetNormal, assetHover) {
+    const isHovered = (currentHoverButton === btnId); const targetImage = isHovered ? assets.images[assetHover] : assets.images[assetNormal];
+    if (targetImage && targetImage.complete) { ctx.drawImage(targetImage, posX, posY, width, height); }
+}
+
+function wrapText(context, text, x, y, maxWidth, lineHeight) {
+    let words = text.split(' '); let line = '';
+    for(let n = 0; n < words.length; n++) {
+        let testLine = line + words[n] + ' '; let metrics = context.measureText(testLine);
+        if (metrics.width > maxWidth && n > 0) { context.fillText(line, x, y); line = words[n] + ' '; y += lineHeight; } else { line = testLine; }
+    }
+    context.fillText(line, x, y);
+}
+
+function drawTrashStats() {
+    const counts = { organik: 0, anorganik: 0, b3: 0 }; gameObjects.forEach(obj => { if (obj.isTrash && counts.hasOwnProperty(obj.type)) counts[obj.type]++; });
+    const startX = 30; const startY = 25; const padding = 12; const boxW = 75; const boxH = 60;
+    ctx.save(); ctx.fillStyle = "rgba(0, 0, 0, 0.4)"; ctx.beginPath(); ctx.roundRect(startX - 10, startY - 10, (boxW * 3) + (padding * 2) + 20, boxH + 20, 15); ctx.fill(); ctx.restore();
+    const drawStatBox = (x, count, color) => {
+        ctx.save(); ctx.fillStyle = color; ctx.shadowBlur = 8; ctx.shadowColor = color; ctx.beginPath(); ctx.roundRect(x, startY, boxW, boxH, 10); ctx.fill();
+        ctx.fillStyle = "white"; ctx.textAlign = "center"; ctx.font = "bold 28px Arial"; ctx.fillText(count, x + (boxW / 2), startY + 40); ctx.restore();
+    };
+    drawStatBox(startX, counts.organik, "#27ae60"); drawStatBox(startX + boxW + padding, counts.anorganik, "#2980b9"); drawStatBox(startX + (boxW + padding) * 2, counts.b3, "#e67e22");
+}
+
+function mainLoop() {
+    ctx.clearRect(0, 0, 1280, 720); ctx.save();
+    let shakeX = 0, shakeY = 0;
+    if (currentState === "IN_GAME" && activeLevel >= 3 && gameTimer <= 15 && gameTimer > 0) {
+        let cycle = Math.sin(Date.now() / 318); if (cycle > 0) { shakeX = (Math.random() * 6 - 3); shakeY = (Math.random() * 6 - 3); }
+    }
+    if (screenShakeCounter > 0) { shakeX += Math.random() * 10 - 5; shakeY += Math.random() * 10 - 5; screenShakeCounter--; }
+    ctx.translate(shakeX, shakeY);
+
+    if (currentState === "MAIN_MENU") {
+        ctx.drawImage(video, 0, 0, 1280, 720); if (assets.images["logo"]) ctx.drawImage(assets.images["logo"], menuConfig.logo.x, menuConfig.logo.y, menuConfig.logo.w, menuConfig.logo.h);
+        drawButtonUI("play", menuConfig.buttons.x, 310, menuConfig.buttons.w, menuConfig.buttons.h, "btn_play", "btn_play_h");
+        drawButtonUI("levels", menuConfig.buttons.x, 430, menuConfig.buttons.w, menuConfig.buttons.h, "btn_levels", "btn_levels_h");
+        drawButtonUI("guide", menuConfig.buttons.x, 550, menuConfig.buttons.w, menuConfig.buttons.h, "btn_guide", "btn_guide_h");
+    } 
+    else if (currentState === "IN_GAME" || currentState === "SCREEN_WIN" || currentState === "SCREEN_LOSE") {
+        let currentBG = assets.images[`bg_level${activeLevel}`]; if (currentBG) ctx.drawImage(currentBG, 0, 0, 1280, 720);
+        if (currentState === "IN_GAME") {
+            drawTrashStats(); ctx.save(); ctx.textAlign = "left"; ctx.font = "bold 30px Arial"; ctx.fillStyle = "#FFD700"; 
+            ctx.fillText((`LEVEL ${activeLevel} : ${LEVEL_NAMES[activeLevel] || ""}`).toUpperCase(), 30, 135); ctx.restore();
+        }
+        if (activeLevel >= 3 && currentState === "IN_GAME" && gameTimer <= 15) { let flashOpacity = Math.sin(Date.now() / 200) * 0.15 + 0.15; ctx.fillStyle = `rgba(255, 0, 0, ${flashOpacity})`; ctx.fillRect(0, 0, 1280, 720); }
+        gameObjects.forEach(obj => { if (!obj.isTrash && obj !== dragSubject) obj.render(ctx); });
+        BIN_DEFINITIONS.forEach(bin => { const imgBin = assets.images[`bin_${bin.type}`]; if (imgBin) ctx.drawImage(imgBin, bin.x, bin.y, bin.w, bin.h); });
+        gameObjects.forEach(obj => { if (obj.isTrash && obj !== dragSubject) obj.render(ctx); });
+        if (dragSubject) dragSubject.render(ctx);
+        for (let i = 0; i < playerLives; i++) { if (assets.images["heart"]) ctx.drawImage(assets.images["heart"], 1120 + (i * 45), 30, 40, 40); }
+        if (activeLevel >= 3 && currentState === "IN_GAME") { ctx.save(); ctx.textAlign = "center"; ctx.fillStyle = gameTimer <= 15 ? "#ff3333" : "white"; ctx.font = "bold 40px Arial"; ctx.fillText("WAKTU: " + gameTimer + "s", 640, 60); ctx.restore(); }
+        
+        if (currentState === "SCREEN_WIN" || currentState === "SCREEN_LOSE") {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.8)"; ctx.fillRect(0, 0, 1280, 720);
+            const resultHeader = (currentState === "SCREEN_WIN") ? assets.images["win_img"] : assets.images["lose_img"]; 
+            
+            if (currentState === "SCREEN_WIN" && activeLevel === 6) {
+                if (resultHeader) ctx.drawImage(resultHeader, 415, 255, 450, 210);
+            } else {
+                if (resultHeader) ctx.drawImage(resultHeader, 415, 60, 450, 210);
+            }
+            
+            if (currentState === "SCREEN_LOSE") { 
+                ctx.save(); ctx.textAlign = "center"; ctx.fillStyle = "#ffcc00"; ctx.font = "bold 24px Arial"; 
+                ctx.fillText("Kesempatan Mengulang Level Ini: " + levelRetries, 640, 290); ctx.restore(); 
+                drawButtonUI("restart", 465, 320, 350, 100, "btn_restart", "btn_restart_h"); 
+                drawButtonUI("home", 465, 435, 350, 100, "btn_home", "btn_home_h");
+            } 
+            else if (currentState === "SCREEN_WIN") {
+                if (activeLevel < 6) {
+                    drawButtonUI("continue", 465, 290, 350, 100, "btn_continue", "btn_continue_h");
+                    drawButtonUI("restart", 465, 405, 350, 100, "btn_restart", "btn_restart_h");
+                    drawButtonUI("home", 465, 520, 350, 100, "btn_home", "btn_home_h");
+                }
+            }
+        }
+    }
+    else if (currentState === "PHASE_TRANSITION") { ctx.drawImage(transVideo, 0, 0, 1280, 720); }
+    else if (currentState === "GAME_OVER_THANKS") {
+        ctx.fillStyle = "#0a0a0a";
+        ctx.fillRect(0, 0, 1280, 720);
+        let grd = ctx.createRadialGradient(640, 360, 100, 640, 360, 600);
+        grd.addColorStop(0, "rgba(40, 40, 40, 1)"); grd.addColorStop(1, "rgba(0, 0, 0, 1)");
+        ctx.fillStyle = grd; ctx.fillRect(0, 0, 1280, 720);
+        if (assets.images["logo"]) ctx.drawImage(assets.images["logo"], 440, 50, 400, 180);
+        ctx.textAlign = "center"; ctx.save(); ctx.shadowBlur = 15; ctx.shadowColor = "#FFD700";
+        ctx.font = "bold 60px 'Verdana', sans-serif"; ctx.fillStyle = "#FFFFFF";
+        ctx.fillText("TERIMAKASIH TELAH", 640, 350); ctx.fillText("MEMAINKAN GAME KAMI", 640, 430); ctx.restore();
+        ctx.save(); ctx.font = "italic bold 50px 'Arial Black', sans-serif"; ctx.fillStyle = "#FFD700";
+        ctx.fillText("DAKARA TEAM", 640, 550); ctx.restore();
+        drawButtonUI("home_end", 465, 620, 350, 80, "btn_home", "btn_home_h");
+    }
+    
+    const muteImg = isMuted ? assets.images["btn_unmute"] : assets.images["btn_mute"]; 
+    if (muteImg && muteImg.complete) { ctx.drawImage(muteImg, muteBtnConfig.x, muteBtnConfig.y, muteBtnConfig.w, muteBtnConfig.h); }
+
+    if (factOverlay.active) {
+        factOverlay.timer++; if (factOverlay.timer < 30) factOverlay.opacity += 0.035; else if (factOverlay.timer > factOverlay.duration - 30) factOverlay.opacity -= 0.035;
+        ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, factOverlay.opacity));
+        if (factOverlay.bgSnapshot) { ctx.filter = "blur(12px) brightness(0.4)"; ctx.drawImage(factOverlay.bgSnapshot, 0, 0, 1280, 720); ctx.filter = "none"; }
+        if (assets.images["logo"]) ctx.drawImage(assets.images["logo"], 490, 60, 300, 140);
+        ctx.fillStyle = "rgba(0, 0, 0, 0.6)"; ctx.beginPath(); ctx.roundRect(240, 280, 800, 280, 30); ctx.fill();
+        ctx.textAlign = "center"; ctx.fillStyle = "#FFD700"; ctx.font = "bold 38px Arial"; ctx.fillText("TAHUKAH KAMU?", 640, 350);
+        ctx.fillStyle = "white"; ctx.font = "italic 30px Verdana"; wrapText(ctx, factOverlay.text, 640, 410, 720, 40);
+        ctx.fillStyle = "rgba(255,255,255,0.2)"; ctx.fillRect(440, 520, 400, 12);
+        ctx.fillStyle = "#FFD700"; let progress = (factOverlay.timer / factOverlay.duration) * 400; ctx.fillRect(440, 520, progress, 12);
+        ctx.restore(); if (factOverlay.timer >= factOverlay.duration) { factOverlay.active = false; actualStartLevel(factOverlay.nextLevel); }
+    }
+
+    if (phaseOverlay.active) {
+        phaseOverlay.timer++; if (phaseOverlay.timer < 30) { phaseOverlay.opacity += 0.035; phaseOverlay.scale += 0.003; } else if (phaseOverlay.timer > phaseOverlay.duration - 30) { phaseOverlay.opacity -= 0.035; }
+        ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, phaseOverlay.opacity));
+        ctx.fillStyle = "rgba(0, 0, 0, 0.5)"; ctx.fillRect(0, 0, 1280, 720);
+        ctx.textAlign = "center"; ctx.translate(640, 345); ctx.scale(phaseOverlay.scale, phaseOverlay.scale);
+        ctx.font = "bold 85px 'Verdana', sans-serif"; ctx.fillStyle = "#FFD700"; ctx.fillText(phaseOverlay.text, 0, 0);
+        ctx.font = "bold 48px 'Arial'"; ctx.fillStyle = "#FFFFFF"; ctx.fillText(phaseOverlay.subtext, 0, 80); ctx.restore();
+        if (phaseOverlay.timer >= phaseOverlay.duration) { phaseOverlay.active = false; if (phaseOverlay.pendingMusic) { handleBGM(phaseOverlay.pendingMusic); phaseOverlay.pendingMusic = null; } }
+    }
+
+    if (blackFade.active) {
+        if (blackFade.opacity < blackFade.target) blackFade.opacity += 0.025;
+        else if (blackFade.opacity > blackFade.target) blackFade.opacity -= 0.025;
+        ctx.fillStyle = `rgba(0, 0, 0, ${blackFade.opacity})`;
+        ctx.fillRect(0, 0, 1280, 720);
+        if (Math.abs(blackFade.opacity - blackFade.target) < 0.03) {
+            blackFade.opacity = blackFade.target;
+            if (blackFade.target === 1 && blackFade.callback) { const cb = blackFade.callback; blackFade.callback = null; cb(); } else if (blackFade.target === 0) { blackFade.active = false; }
+        }
+    }
+    ctx.restore(); requestAnimationFrame(mainLoop);
+}
+
+function calculateInputPos(e) {
+    const rect = canvas.getBoundingClientRect(); let clientX, clientY;
+    if (e.touches && e.touches.length > 0) { clientX = e.touches[0].clientX; clientY = e.touches[0].clientY; }
+    else if (e.changedTouches && e.changedTouches.length > 0) { clientX = e.changedTouches[0].clientX; clientY = e.changedTouches[0].clientY; }
+    else { clientX = e.clientX; clientY = e.clientY; }
+    const scaleX = 1280 / rect.width; const scaleY = 720 / rect.height; return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+}
+
+function handleInputDown(e) {
+    if (!document.fullscreenElement) { document.documentElement.requestFullscreen().catch(() => {}); }
+    const pos = calculateInputPos(e);
+    if (checkCollision(pos, muteBtnConfig.x, muteBtnConfig.y, muteBtnConfig.w, muteBtnConfig.h)) { toggleMute(); executeSFX('click'); return; }
+    if (currentState === "MAIN_MENU" || currentState === "LOADING") { video.play().catch(() => {}); if (assets.sounds['lobby'] && assets.sounds['lobby'].paused) handleBGM('lobby'); }
+    if (currentState === "MAIN_MENU") {
+        if (checkCollision(pos, menuConfig.buttons.x, 310, menuConfig.buttons.w, menuConfig.buttons.h)) currentHoverButton = "play";
+        if (checkCollision(pos, menuConfig.buttons.x, 430, menuConfig.buttons.w, menuConfig.buttons.h)) currentHoverButton = "levels";
+        if (checkCollision(pos, menuConfig.buttons.x, 550, menuConfig.buttons.w, menuConfig.buttons.h)) currentHoverButton = "guide";
+    } else if (currentState === "IN_GAME") {
+        for (let i = gameObjects.length - 1; i >= 0; i--) { const target = gameObjects[i]; if (checkCollision(pos, target.x, target.y, target.w, target.h)) { dragSubject = target; dragSubject.isBeingDragged = true; break; } }
+    } else if (currentState === "SCREEN_WIN" || currentState === "SCREEN_LOSE") {
+        if (currentState === "SCREEN_LOSE") {
+            if (checkCollision(pos, 465, 320, 350, 100)) currentHoverButton = "restart";
+            if (checkCollision(pos, 465, 435, 350, 100)) currentHoverButton = "home";
+        } else if (currentState === "SCREEN_WIN" && activeLevel < 6) {
+            if (checkCollision(pos, 465, 290, 350, 100)) currentHoverButton = "continue";
+            if (checkCollision(pos, 465, 405, 350, 100)) currentHoverButton = "restart";
+            if (checkCollision(pos, 465, 520, 350, 100)) currentHoverButton = "home";
+        }
+    } else if (currentState === "GAME_OVER_THANKS") {
+        if (checkCollision(pos, 465, 620, 350, 80)) currentHoverButton = "home_end";
+    }
+}
+
+function handleInputMove(e) { if (!dragSubject) return; const pos = calculateInputPos(e); dragSubject.x = pos.x - dragSubject.w / 2; dragSubject.y = pos.y - dragSubject.h / 2; }
+
+function handleInputUp(e) {
+    const pos = calculateInputPos(e);
+    if (currentHoverButton) {
+        executeSFX('click');
+        if (currentHoverButton === "play") setupLevel(1);
+        if (currentHoverButton === "continue") { 
+            if(activeLevel === 3) startTransitionToPhase2(); 
+            else if(activeLevel === 1) setupLevel(2); 
+            else if(activeLevel === 2) setupLevel(3); 
+            else if(activeLevel === 4) setupLevel(5); 
+            else if(activeLevel === 5) setupLevel(6);
+        }
+        if (currentHoverButton === "restart") setupLevel(activeLevel); 
+        if (currentHoverButton === "home" || currentHoverButton === "home_end") { 
+            clearInterval(timerInterval); activeLevel = 0; levelRetries = 3; currentState = "MAIN_MENU"; handleBGM('lobby'); video.play(); 
+        }
+    }
+    if (dragSubject) {
+        let targetBin = BIN_DEFINITIONS.find(bin => checkCollision(pos, bin.x, bin.y, bin.w, bin.h));
+        if (targetBin) {
+            if (dragSubject.isTrash && dragSubject.type === targetBin.type) {
+                executeSFX('trash'); gameObjects = gameObjects.filter(item => item !== dragSubject);
+                if (gameObjects.filter(item => item.isTrash).length === 0) {
+                    clearInterval(timerInterval); handleBGM('win'); currentState = "SCREEN_WIN"; 
+                    if (activeLevel === 6) {
+                        setTimeout(() => {
+                            blackFade.active = true; blackFade.target = 1;
+                            blackFade.callback = () => { currentState = "GAME_OVER_THANKS"; handleBGM('lobby'); blackFade.target = 0; };
+                        }, 2500); 
+                    }
+                }
+            } else { 
+                playerLives--; screenShakeCounter = 15; executeSFX('click'); 
+                if (playerLives <= 0) { clearInterval(timerInterval); currentState = "SCREEN_LOSE"; handleBGM('lose'); } 
+                dragSubject.returnToOrigin(); 
+            }
+        } else { dragSubject.returnToOrigin(); }
+        dragSubject.isBeingDragged = false; dragSubject = null;
+    }
+    currentHoverButton = null;
+}
+
+canvas.addEventListener('mousedown', handleInputDown); window.addEventListener('mousemove', handleInputMove); window.addEventListener('mouseup', handleInputUp);
+canvas.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); handleInputDown(e); }, {passive: false});
+canvas.addEventListener('touchmove', (e) => { if (e.cancelable) e.preventDefault(); handleInputMove(e); }, {passive: false});
+canvas.addEventListener('touchend', (e) => { if (e.cancelable) e.preventDefault(); handleInputUp(e); }, {passive: false});
+
+function checkCollision(pos, x, y, w, h) { return pos.x >= x && pos.x <= x + w && pos.y >= y && pos.y <= y + h; }
+
+function initializeGame() {
+    currentState = "LOADING"; const imageKeys = Object.keys(IMAGE_RESOURCES); const audioKeys = Object.keys(AUDIO_RESOURCES);
+    assets.totalResources = imageKeys.length + audioKeys.length;
+    imageKeys.forEach(key => { const img = new Image(); img.src = IMAGE_RESOURCES[key]; img.onload = () => { assets.images[key] = img; resourceLoaded(); }; img.onerror = () => { resourceLoaded(); }; });
+    audioKeys.forEach(key => { const sound = new Audio(); sound.src = AUDIO_RESOURCES[key]; sound.load(); sound.oncanplaythrough = () => { if (!assets.sounds[key]) { assets.sounds[key] = sound; resourceLoaded(); } }; sound.onerror = () => { resourceLoaded(); }; });
+}
+
+function resourceLoaded() { assets.loadedCount++; if (assets.loadedCount >= assets.totalResources) { setTimeout(() => { currentState = "MAIN_MENU"; handleBGM('lobby'); video.play().catch(() => {}); }, 500); } }
+
+initializeGame();
+mainLoop();
+</script>
+</body>
+</html>
